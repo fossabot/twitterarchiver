@@ -11,6 +11,12 @@ import twitter4j.conf.PropertyConfiguration;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.URL;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.GZIPOutputStream;
 
 /**
@@ -81,6 +87,8 @@ public class App {
     Authorization auth = new OAuthAuthorization(new PropertyConfiguration(App.class.getResourceAsStream("/auth.properties")));
     TwitterStream ts = tsf.getInstance(auth);
     final StreamProvider jsonStreamProvider = new StreamProvider("json");
+    final RingBuffer ring = new RingBuffer(100);
+    final AtomicLong last = new AtomicLong(0);
     ts.addListener(new StatusAdapter() {
       JsonFactory jf = new MappingJsonFactory();
 
@@ -90,19 +98,25 @@ public class App {
           OutputStream jsonStream = jsonStreamProvider.getStream();
           if (jsonStream != null) {
             writeJson(s, jsonStream);
+            if (System.currentTimeMillis() / 1000l > last.longValue()) {
+              last.set(System.currentTimeMillis() / 1000l);
+              System.out.println(ring.average());
+            }
           }
-        } catch (IOException e) {
+        } catch (Exception e) {
           e.printStackTrace();
         }
       }
 
       private void writeJson(Status s, OutputStream stream) throws IOException {
+        long time = s.getCreatedAt().getTime();
+        ring.append((int) (System.currentTimeMillis() - time));
         JsonGenerator g = jf.createGenerator(stream);
         g.writeStartObject();
         g.writeStringField(TEXT, s.getText());
         g.writeNumberField(ID, s.getId());
         g.writeNumberField(USER_ID, s.getUser().getId());
-        g.writeNumberField(CREATED_AT, s.getCreatedAt().getTime());
+        g.writeNumberField(CREATED_AT, time);
         long inReplyToStatusId = s.getInReplyToStatusId();
         if (inReplyToStatusId != -1) {
           g.writeNumberField(IN_REPLY_TO_ID, inReplyToStatusId);
@@ -131,7 +145,12 @@ public class App {
         if (urlEntities != null && urlEntities.length > 0) {
           g.writeArrayFieldStart(URLS);
           for (URLEntity urlEntity : urlEntities) {
-            g.writeString(urlEntity.getExpandedURL().toString());
+            URL expandedURL = urlEntity.getExpandedURL();
+            if (expandedURL == null) {
+              g.writeString(urlEntity.getURL().toString());
+            } else {
+              g.writeString(expandedURL.toString());
+            }
           }
           g.writeEndArray();
         }
