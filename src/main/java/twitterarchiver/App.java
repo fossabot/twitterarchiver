@@ -3,6 +3,8 @@ package twitterarchiver;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.MappingJsonFactory;
+import com.sampullara.cli.Args;
+import com.sampullara.cli.Argument;
 import twitter4j.*;
 import twitter4j.auth.Authorization;
 import twitter4j.auth.OAuthAuthorization;
@@ -11,11 +13,9 @@ import twitter4j.conf.PropertyConfiguration;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.net.URL;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.GZIPOutputStream;
 
@@ -39,12 +39,12 @@ public class App {
   private static final String FOLLOWERS_FRIENDS_FAVS_STATUSES_LISTED = "z";
   private static final String LANG = "n";
 
+  @Argument
+  private static Boolean firehose = false;
+
   private static class StreamProvider {
 
-    private final String type;
-
-    public StreamProvider(String type) {
-      this.type = type;
+    public StreamProvider() {
       Runtime.getRuntime().addShutdownHook(new Thread() {
         @Override
         public void run() {
@@ -73,7 +73,7 @@ public class App {
           }
           last = newlast;
           // Ensures that it doesn't write over a previous file if you stop and restart
-          stream = new GZIPOutputStream(new FileOutputStream("sample" + System.currentTimeMillis() + "." + type + ".gz"));
+          stream = new GZIPOutputStream(new FileOutputStream("sample" + System.currentTimeMillis() + ".json.gz"));
         }
         return stream;
       } else {
@@ -83,40 +83,67 @@ public class App {
   }
 
   public static void main(String[] args) throws IOException {
+    try {
+      Args.parse(App.class, args);
+    } catch (IllegalArgumentException e) {
+      System.err.println(e.getMessage());
+      Args.usage(App.class);
+      System.exit(1);
+    }
+    final AtomicLong tweets = new AtomicLong(0);
+    final AtomicLong dropped = new AtomicLong(0);
+    final AtomicLong last = new AtomicLong(System.currentTimeMillis());
+    final ExecutorService es = Executors.newFixedThreadPool(2);
     TwitterStreamFactory tsf = new TwitterStreamFactory();
     Authorization auth = new OAuthAuthorization(new PropertyConfiguration(App.class.getResourceAsStream("/auth.properties")));
     TwitterStream ts = tsf.getInstance(auth);
-    final StreamProvider jsonStreamProvider = new StreamProvider("json");
-    final RingBuffer ring = new RingBuffer(100);
-    final AtomicLong last = new AtomicLong(0);
+    final StreamProvider jsonStreamProvider = new StreamProvider();
     ts.addListener(new StatusAdapter() {
       JsonFactory jf = new MappingJsonFactory();
 
+      // Avoid getting backed up and running out of memory
+      Semaphore semaphore = new Semaphore(10000);
+
       @Override
-      public void onStatus(Status s) {
+      public void onStatus(final Status s) {
         try {
-          OutputStream jsonStream = jsonStreamProvider.getStream();
+          final OutputStream jsonStream = jsonStreamProvider.getStream();
           if (jsonStream != null) {
-            writeJson(s, jsonStream);
-            if (System.currentTimeMillis() / 1000l > last.longValue()) {
-              last.set(System.currentTimeMillis() / 1000l);
-              System.out.println(ring.average());
+            if (semaphore.tryAcquire()) {
+              es.submit(new Runnable() {
+                @Override
+                public void run() {
+                  try {
+                    writeJson(s, jsonStream);
+                  } catch (Exception e) {
+                    e.printStackTrace();
+                  } finally {
+                    semaphore.release();
+                  }
+                }
+              });
+            } else {
+              dropped.incrementAndGet();
             }
           }
-        } catch (Exception e) {
+        } catch (IOException e) {
           e.printStackTrace();
         }
       }
 
       private void writeJson(Status s, OutputStream stream) throws IOException {
-        long time = s.getCreatedAt().getTime();
-        ring.append((int) (System.currentTimeMillis() - time));
+        long l = tweets.incrementAndGet();
+        if (l % 100000 == 0) {
+          long now = System.currentTimeMillis();
+          long start = last.getAndSet(now);
+          System.out.println(100000 * 1000 / (now - start) + " " + tweets + " " + dropped);
+        }
         JsonGenerator g = jf.createGenerator(stream);
         g.writeStartObject();
         g.writeStringField(TEXT, s.getText());
         g.writeNumberField(ID, s.getId());
         g.writeNumberField(USER_ID, s.getUser().getId());
-        g.writeNumberField(CREATED_AT, time);
+        g.writeNumberField(CREATED_AT, s.getCreatedAt().getTime());
         long inReplyToStatusId = s.getInReplyToStatusId();
         if (inReplyToStatusId != -1) {
           g.writeNumberField(IN_REPLY_TO_ID, inReplyToStatusId);
@@ -145,11 +172,11 @@ public class App {
         if (urlEntities != null && urlEntities.length > 0) {
           g.writeArrayFieldStart(URLS);
           for (URLEntity urlEntity : urlEntities) {
-            URL expandedURL = urlEntity.getExpandedURL();
+            String expandedURL = urlEntity.getExpandedURL();
             if (expandedURL == null) {
-              g.writeString(urlEntity.getURL().toString());
+              g.writeString(urlEntity.getURL());
             } else {
-              g.writeString(expandedURL.toString());
+              g.writeString(expandedURL);
             }
           }
           g.writeEndArray();
@@ -158,7 +185,7 @@ public class App {
         if (mediaEntities != null && mediaEntities.length > 0) {
           g.writeArrayFieldStart(MEDIA);
           for (MediaEntity mediaEntity : mediaEntities) {
-            g.writeString(mediaEntity.getMediaURL().toString());
+            g.writeString(mediaEntity.getMediaURL());
           }
           g.writeEndArray();
         }
@@ -187,6 +214,10 @@ public class App {
         }
       }
     });
-    ts.sample();
+    if (firehose) {
+      ts.firehose(0);
+    } else {
+      ts.sample();
+    }
   }
 }
