@@ -2,17 +2,17 @@ package twitterarchiver;
 
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.MappingJsonFactory;
 import com.sampullara.cli.Args;
 import com.sampullara.cli.Argument;
-import twitter4j.*;
-import twitter4j.auth.Authorization;
-import twitter4j.auth.OAuthAuthorization;
-import twitter4j.conf.PropertyConfiguration;
 
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -94,36 +94,41 @@ public class App {
     final AtomicLong dropped = new AtomicLong(0);
     final AtomicLong last = new AtomicLong(System.currentTimeMillis());
     final ExecutorService es = Executors.newFixedThreadPool(2);
-    TwitterStreamFactory tsf = new TwitterStreamFactory();
-    Authorization auth = new OAuthAuthorization(new PropertyConfiguration(App.class.getResourceAsStream("/auth.properties")));
-    TwitterStream ts = tsf.getInstance(auth);
+    Properties auth = new Properties();
+    auth.load(App.class.getResourceAsStream("/auth.properties"));
+    TwitterFeed twitterFeed = new TwitterFeed(auth.getProperty("username"),
+            auth.getProperty("password"),
+            "https://stream.twitter.com/1/statuses/sample.json", 600000);// 10 minutes
     final StreamProvider jsonStreamProvider = new StreamProvider();
-    ts.addListener(new StatusAdapter() {
+    twitterFeed.addEventListener(new TwitterFeedListener() {
       JsonFactory jf = new MappingJsonFactory();
 
       // Avoid getting backed up and running out of memory
       Semaphore semaphore = new Semaphore(10000);
 
       @Override
-      public void onStatus(final Status s) {
+      public void messageReceived(final TwitterFeedEvent se) {
         try {
-          final OutputStream jsonStream = jsonStreamProvider.getStream();
-          if (jsonStream != null) {
-            if (semaphore.tryAcquire()) {
-              es.submit(new Runnable() {
-                @Override
-                public void run() {
-                  try {
-                    writeJson(s, jsonStream);
-                  } catch (Exception e) {
-                    e.printStackTrace();
-                  } finally {
-                    semaphore.release();
+          // Skip deletes, etc.
+          if (se.getNode().get("text") != null) {
+            final OutputStream jsonStream = jsonStreamProvider.getStream();
+            if (jsonStream != null) {
+              if (semaphore.tryAcquire()) {
+                es.submit(new Runnable() {
+                  @Override
+                  public void run() {
+                    try {
+                      writeJson(se.getNode(), jsonStream);
+                    } catch (Exception e) {
+                      e.printStackTrace();
+                    } finally {
+                      semaphore.release();
+                    }
                   }
-                }
-              });
-            } else {
-              dropped.incrementAndGet();
+                });
+              } else {
+                dropped.incrementAndGet();
+              }
             }
           }
         } catch (IOException e) {
@@ -131,7 +136,29 @@ public class App {
         }
       }
 
-      private void writeJson(Status s, OutputStream stream) throws IOException {
+      @Override
+      public void tooSlow() {
+        System.out.println("Too slow!");
+      }
+
+      ThreadLocal<SimpleDateFormat> formatter = new ThreadLocal<SimpleDateFormat>() {
+        @Override
+        protected SimpleDateFormat initialValue() {
+          // Fri Dec 21 18:14:35 +0000 2012
+          return new SimpleDateFormat("EEE MMM dd HH:mm:ss Z yyyy");
+        }
+      };
+
+      Long getLong(JsonNode node, String name) {
+        JsonNode jsonNode = node.get(name);
+        if (jsonNode == null) {
+          return null;
+        } else {
+          return jsonNode.asLong();
+        }
+      }
+
+      private void writeJson(JsonNode s, OutputStream stream) throws IOException {
         long l = tweets.incrementAndGet();
         if (l % 100000 == 0) {
           long now = System.currentTimeMillis();
@@ -140,84 +167,95 @@ public class App {
         }
         JsonGenerator g = jf.createGenerator(stream);
         g.writeStartObject();
-        g.writeStringField(TEXT, s.getText());
-        g.writeNumberField(ID, s.getId());
-        g.writeNumberField(USER_ID, s.getUser().getId());
-        g.writeNumberField(CREATED_AT, s.getCreatedAt().getTime());
-        long inReplyToStatusId = s.getInReplyToStatusId();
-        if (inReplyToStatusId != -1) {
+        g.writeStringField(TEXT, s.get("text").textValue());
+        g.writeNumberField(ID, getLong(s, "id"));
+        JsonNode u = s.get("user");
+        g.writeNumberField(USER_ID, u.get("id").longValue());
+        try {
+          g.writeNumberField(CREATED_AT, formatter.get().parse(s.get("created_at").textValue()).getTime());
+        } catch (ParseException e) {
+          e.printStackTrace();
+        }
+        Long inReplyToStatusId = getLong(s, "in_reply_to_status_id");
+        if (inReplyToStatusId != null) {
           g.writeNumberField(IN_REPLY_TO_ID, inReplyToStatusId);
         }
-        Status retweetedStatus = s.getRetweetedStatus();
+        JsonNode retweetedStatus = s.get("retweeted_status");
         if (retweetedStatus != null) {
-          g.writeNumberField(RETWEETED_ID, retweetedStatus.getId());
+          g.writeNumberField(RETWEETED_ID, getLong(retweetedStatus, "id"));
         }
-        UserMentionEntity[] userMentionEntities = s.getUserMentionEntities();
-        if (userMentionEntities != null && userMentionEntities.length > 0) {
-          g.writeArrayFieldStart(USER_MENTION_IDS);
-          for (UserMentionEntity userMentionEntity : userMentionEntities) {
-            g.writeNumber(userMentionEntity.getId());
+        JsonNode entities = s.get("entities");
+        if (entities != null && !entities.isNull()) {
+          JsonNode userMentionEntities = entities.get("user_mentions");
+          if (userMentionEntities != null && userMentionEntities.size() > 0) {
+            g.writeArrayFieldStart(USER_MENTION_IDS);
+            for (JsonNode userMentionEntity : userMentionEntities) {
+              g.writeNumber(getLong(userMentionEntity, "id"));
+            }
+            g.writeEndArray();
           }
-          g.writeEndArray();
-        }
-        HashtagEntity[] hashtagEntities = s.getHashtagEntities();
-        if (hashtagEntities != null && hashtagEntities.length > 0) {
-          g.writeArrayFieldStart(HASHTAGS);
-          for (HashtagEntity hashtagEntity : hashtagEntities) {
-            g.writeString(hashtagEntity.getText());
+          JsonNode hashtagEntities = entities.get("hashtags");
+          if (hashtagEntities != null && hashtagEntities.size() > 0) {
+            g.writeArrayFieldStart(HASHTAGS);
+            for (JsonNode hashtagEntity : hashtagEntities) {
+              g.writeString(hashtagEntity.get("text").textValue());
+            }
+            g.writeEndArray();
           }
-          g.writeEndArray();
+          JsonNode urlEntities = entities.get("urls");
+          if (urlEntities != null && urlEntities.size() > 0) {
+            g.writeArrayFieldStart(URLS);
+            for (JsonNode urlEntity : urlEntities) {
+              JsonNode expandedURL = urlEntity.get("expanded_url");
+              if (expandedURL == null) {
+                g.writeString(urlEntity.get("url").textValue());
+              } else {
+                g.writeString(expandedURL.textValue());
+              }
+            }
+            g.writeEndArray();
+          }
+          JsonNode mediaEntities = entities.get("media");
+          if (mediaEntities != null && mediaEntities.size() > 0) {
+            g.writeArrayFieldStart(MEDIA);
+            for (JsonNode mediaEntity : mediaEntities) {
+              g.writeString(mediaEntity.get("media_url").textValue());
+            }
+            g.writeEndArray();
+          }
         }
-        URLEntity[] urlEntities = s.getURLEntities();
-        if (urlEntities != null && urlEntities.length > 0) {
-          g.writeArrayFieldStart(URLS);
-          for (URLEntity urlEntity : urlEntities) {
-            String expandedURL = urlEntity.getExpandedURL();
-            if (expandedURL == null) {
-              g.writeString(urlEntity.getURL());
-            } else {
-              g.writeString(expandedURL);
+        JsonNode geoLocation = s.get("geo");
+        if (geoLocation != null && !geoLocation.isNull()) {
+          JsonNode coordinates = s.get("coordinates");
+          if (coordinates != null && !coordinates.isNull()) {
+            coordinates = coordinates.get("coordinates");
+            if (coordinates != null && !coordinates.isNull()) {
+              g.writeArrayFieldStart(GEO);
+              g.writeNumber(coordinates.get(0).doubleValue());
+              g.writeNumber(coordinates.get(1).doubleValue());
+              g.writeEndArray();
             }
           }
-          g.writeEndArray();
         }
-        MediaEntity[] mediaEntities = s.getMediaEntities();
-        if (mediaEntities != null && mediaEntities.length > 0) {
-          g.writeArrayFieldStart(MEDIA);
-          for (MediaEntity mediaEntity : mediaEntities) {
-            g.writeString(mediaEntity.getMediaURL());
-          }
-          g.writeEndArray();
-        }
-        GeoLocation geoLocation = s.getGeoLocation();
-        if (geoLocation != null) {
-          g.writeArrayFieldStart(GEO);
-          g.writeNumber(geoLocation.getLatitude());
-          g.writeNumber(geoLocation.getLongitude());
-          g.writeEndArray();
-        }
-        if (s.getUser().isVerified()) {
+        if (u.get("verified").asBoolean()) {
           g.writeBooleanField(VERIFIED, true);
         }
         g.writeArrayFieldStart(FOLLOWERS_FRIENDS_FAVS_STATUSES_LISTED);
-        g.writeNumber(s.getUser().getFollowersCount());
-        g.writeNumber(s.getUser().getFriendsCount());
-        g.writeNumber(s.getUser().getFavouritesCount());
-        g.writeNumber(s.getUser().getStatusesCount());
-        g.writeNumber(s.getUser().getListedCount());
+        g.writeNumber(u.get("followers_count").longValue());
+        g.writeNumber(u.get("friends_count").longValue());
+        g.writeNumber(u.get("favourites_count").longValue());
+        g.writeNumber(u.get("statuses_count").longValue());
+        g.writeNumber(u.get("listed_count").longValue());
         g.writeEndArray();
-        g.writeStringField(LANG, s.getUser().getLang());
+        g.writeStringField(LANG, u.get("lang").textValue());
         g.writeEndObject();
         synchronized (this) {
           g.flush();
           stream.write('\n');
         }
       }
+
     });
-    if (firehose) {
-      ts.firehose(0);
-    } else {
-      ts.sample();
-    }
+    twitterFeed.run();
   }
 }
