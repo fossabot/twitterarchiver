@@ -141,7 +141,7 @@ public class TwitterFeed implements Runnable {
     synchronized (sls) {
       for (final TwitterFeedListener sl : sls) {
         final AtomicInteger count = counts.get(sl);
-        if (count.intValue() > 1000) {
+        if (count.intValue() > 10000) {
           sl.tooSlow();
         } else {
           count.incrementAndGet();

@@ -82,6 +82,9 @@ public class App {
     }
   }
 
+  @Argument
+  private static String hose = "sample";
+
   public static void main(String[] args) throws IOException {
     try {
       Args.parse(App.class, args);
@@ -93,18 +96,14 @@ public class App {
     final AtomicLong tweets = new AtomicLong(0);
     final AtomicLong dropped = new AtomicLong(0);
     final AtomicLong last = new AtomicLong(System.currentTimeMillis());
-    final ExecutorService es = Executors.newFixedThreadPool(2);
     Properties auth = new Properties();
     auth.load(App.class.getResourceAsStream("/auth.properties"));
     TwitterFeed twitterFeed = new TwitterFeed(auth.getProperty("username"),
             auth.getProperty("password"),
-            "https://stream.twitter.com/1/statuses/sample.json", 600000);// 10 minutes
+            "https://stream.twitter.com/1/statuses/" + hose + ".json", 600000);// 10 minutes
     final StreamProvider jsonStreamProvider = new StreamProvider();
     twitterFeed.addEventListener(new TwitterFeedListener() {
       JsonFactory jf = new MappingJsonFactory();
-
-      // Avoid getting backed up and running out of memory
-      Semaphore semaphore = new Semaphore(10000);
 
       @Override
       public void messageReceived(final TwitterFeedEvent se) {
@@ -113,22 +112,7 @@ public class App {
           if (se.getNode().get("text") != null) {
             final OutputStream jsonStream = jsonStreamProvider.getStream();
             if (jsonStream != null) {
-              if (semaphore.tryAcquire()) {
-                es.submit(new Runnable() {
-                  @Override
-                  public void run() {
-                    try {
-                      writeJson(se.getNode(), jsonStream);
-                    } catch (Exception e) {
-                      e.printStackTrace();
-                    } finally {
-                      semaphore.release();
-                    }
-                  }
-                });
-              } else {
-                dropped.incrementAndGet();
-              }
+              writeJson(se.getNode(), jsonStream);
             }
           }
         } catch (IOException e) {
@@ -138,7 +122,7 @@ public class App {
 
       @Override
       public void tooSlow() {
-        System.out.println("Too slow!");
+        dropped.incrementAndGet();
       }
 
       ThreadLocal<SimpleDateFormat> formatter = new ThreadLocal<SimpleDateFormat>() {
