@@ -3,3 +3,4 @@ target
 *.iml
 .idea
 auth.properties
+aws.properties
