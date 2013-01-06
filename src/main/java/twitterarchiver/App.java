@@ -13,10 +13,10 @@ import java.util.concurrent.atomic.AtomicLong;
 public class App {
 
   @Argument
-  private static Boolean firehose = false;
+  private static String hose = "sample";
 
   @Argument
-  private static String hose = "sample";
+  private static Boolean upload = false;
 
   public static void main(String[] args) throws IOException {
     try {
@@ -39,8 +39,11 @@ public class App {
     jsonStreamProvider.getStream();
     TwitterFeedUploader uploader = new TwitterFeedUploader(hose, ".json.gz", jsonStreamProvider);
     uploader.start();
-    twitterFeed.addEventListener(new TweetSerializer(jsonStreamProvider, dropped, tweets, last));
-    twitterFeed.run();
+    if (!upload) {
+      twitterFeed.addEventListener(new TweetSerializer(jsonStreamProvider, dropped, tweets, last));
+      twitterFeed.addEventListener(new UserStorer());
+      twitterFeed.run();
+    }
   }
 
 }
