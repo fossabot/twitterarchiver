@@ -12,8 +12,14 @@ import org.apache.http.impl.client.BasicCredentialsProvider;
 import org.apache.http.impl.client.DefaultHttpClient;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
-import java.util.*;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.Timer;
+import java.util.TimerTask;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -32,6 +38,8 @@ public class TwitterFeed implements Runnable {
   private final Set<TwitterFeedListener> sls = new HashSet<TwitterFeedListener>();
   private final Map<TwitterFeedListener, AtomicInteger> counts = new HashMap<TwitterFeedListener, AtomicInteger>();
   private final ExecutorService es = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+  private final JsonFactory jf = new MappingJsonFactory();
+
   private String username;
   private String password;
   private String url;
@@ -101,13 +109,10 @@ public class TwitterFeed implements Runnable {
           final HttpResponse response = hc.execute(stream);
           BufferedReader br = new BufferedReader(new InputStreamReader(response.getEntity().getContent()));
           String line;
-          JsonFactory jf = new MappingJsonFactory();
           log.info("Reading stream");
           while (!complete && (line = br.readLine()) != null) {
             if (!line.equals("")) {
-              JsonParser parser = jf.createJsonParser(line);
-              final JsonNode node = parser.readValueAsTree();
-              updateListeners(node, line);
+              updateListeners(line);
               total.incrementAndGet();
               retries = 0;
             }
@@ -137,26 +142,36 @@ public class TwitterFeed implements Runnable {
     }
   }
 
-  private void updateListeners(final JsonNode node, final String line) {
+  private void updateListeners(final String line) {
     synchronized (sls) {
-      for (final TwitterFeedListener sl : sls) {
-        final AtomicInteger count = counts.get(sl);
-        if (count.intValue() > 10000) {
-          sl.tooSlow();
-        } else {
-          count.incrementAndGet();
-          es.submit(new Runnable() {
-            public void run() {
-              try {
-                TwitterFeedEvent se = new TwitterFeedEvent(node, line);
-                sl.messageReceived(se);
-              } finally {
-                count.decrementAndGet();
+      es.submit(new Runnable() {
+        @Override
+        public void run() {
+          try {
+            JsonParser parser = jf.createJsonParser(line);
+            final JsonNode node = parser.readValueAsTree();
+            for (final TwitterFeedListener sl : sls) {
+              final AtomicInteger count = counts.get(sl);
+              if (count.intValue() > 10000) {
+                sl.tooSlow();
+              } else {
+                count.incrementAndGet();
+                es.submit(new Runnable() {
+                  public void run() {
+                    try {
+                      sl.messageReceived(new TwitterFeedEvent(node, line));
+                    } finally {
+                      count.decrementAndGet();
+                    }
+                  }
+                });
               }
             }
-          });
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
         }
-      }
+      });
     }
   }
 }
