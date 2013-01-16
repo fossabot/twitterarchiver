@@ -31,9 +31,13 @@ public class App {
     final AtomicLong last = new AtomicLong(System.currentTimeMillis());
     Properties auth = new Properties();
     auth.load(App.class.getResourceAsStream("/auth.properties"));
+    String host = auth.getProperty("host");
+    if (host == null) {
+      host = "stream.twitter.com";
+    }
     TwitterFeed twitterFeed = new TwitterFeed(auth.getProperty("username"),
             auth.getProperty("password"),
-            "https://stream.twitter.com/1/statuses/" + hose + ".json", 600000);// 10 minutes
+            "https://" + host + "/1/statuses/" + hose + ".json", 600000);// 10 minutes
     final StreamProvider jsonStreamProvider = new StreamProvider(hose);
     // Get the filename we are going to use
     jsonStreamProvider.getStream();
