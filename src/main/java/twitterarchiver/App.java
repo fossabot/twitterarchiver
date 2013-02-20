@@ -6,11 +6,14 @@ import com.sampullara.cli.Argument;
 import java.io.IOException;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.logging.Logger;
 
 /**
  * Hello world!
  */
 public class App {
+
+  private static Logger log = Logger.getLogger("TwitterFeed");
 
   @Argument
   private static String hose = "sample";
@@ -35,9 +38,11 @@ public class App {
     if (host == null) {
       host = "stream.twitter.com";
     }
+    String url = "https://" + host + "/1/statuses/" + hose + ".json";
     TwitterFeed twitterFeed = new TwitterFeed(auth.getProperty("username"),
             auth.getProperty("password"),
-            "https://" + host + "/1/statuses/" + hose + ".json", 600000);// 10 minutes
+            url, 600000);// 10 minutes
+    log.info("Connecting to: " + url);
     final StreamProvider jsonStreamProvider = new StreamProvider(hose);
     // Get the filename we are going to use
     jsonStreamProvider.getStream();
