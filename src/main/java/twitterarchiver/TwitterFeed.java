@@ -142,36 +142,47 @@ public class TwitterFeed implements Runnable {
     }
   }
 
+  private static final AtomicInteger totalCount = new AtomicInteger(0);
+
   private void updateListeners(final String line) {
     synchronized (sls) {
-      es.submit(new Runnable() {
-        @Override
-        public void run() {
-          try {
-            JsonParser parser = jf.createJsonParser(line);
-            final JsonNode node = parser.readValueAsTree();
-            for (final TwitterFeedListener sl : sls) {
-              final AtomicInteger count = counts.get(sl);
-              if (count.intValue() > 10000) {
-                sl.tooSlow();
-              } else {
-                count.incrementAndGet();
-                es.submit(new Runnable() {
-                  public void run() {
-                    try {
-                      sl.messageReceived(new TwitterFeedEvent(node, line));
-                    } finally {
-                      count.decrementAndGet();
-                    }
+      if (totalCount.intValue() > 100000) {
+        for (TwitterFeedListener sl : sls) {
+          sl.tooSlow();
+        }
+      } else {
+          totalCount.incrementAndGet();
+          es.submit(new Runnable() {
+            @Override
+            public void run() {
+              try {
+                JsonParser parser = jf.createJsonParser(line);
+                final JsonNode node = parser.readValueAsTree();
+                for (final TwitterFeedListener sl : sls) {
+                  final AtomicInteger count = counts.get(sl);
+                  if (count.intValue() > 10000) {
+                    sl.tooSlow();
+                  } else {
+                    count.incrementAndGet();
+                    es.submit(new Runnable() {
+                      public void run() {
+                        try {
+                          sl.messageReceived(new TwitterFeedEvent(node, line));
+                        } finally {
+                          count.decrementAndGet();
+                        }
+                      }
+                    });
                   }
-                });
+                }
+              } catch (IOException e) {
+                e.printStackTrace();
+              } finally {
+                totalCount.decrementAndGet();
               }
             }
-          } catch (IOException e) {
-            e.printStackTrace();
-          }
-        }
-      });
+          });
+      }
     }
   }
 }

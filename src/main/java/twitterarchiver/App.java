@@ -21,6 +21,9 @@ public class App {
   @Argument
   private static Boolean upload = false;
 
+  @Argument
+  private static Boolean users = false;
+
   public static void main(String[] args) throws IOException {
     try {
       Args.parse(App.class, args);
@@ -50,7 +53,9 @@ public class App {
     uploader.start();
     if (!upload) {
       twitterFeed.addEventListener(new TweetSerializer(jsonStreamProvider, dropped, tweets, last));
-      twitterFeed.addEventListener(new UserStorer());
+      if (users) {
+        twitterFeed.addEventListener(new UserStorer());
+      }
       twitterFeed.run();
     }
   }

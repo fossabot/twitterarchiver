@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.MappingJsonFactory;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.text.ParseException;
@@ -89,7 +90,8 @@ public class TweetSerializer implements TwitterFeedListener {
       long start = last.getAndSet(now);
       System.out.println(100000 * 1000 / (now - start) + " " + tweets + " " + dropped);
     }
-    JsonGenerator g = jf.createGenerator(stream);
+    ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+    JsonGenerator g = jf.createGenerator(buffer);
     g.writeStartObject();
     g.writeStringField(TEXT, s.get("text").textValue());
     g.writeNumberField(ID, getLong(s, "id"));
@@ -173,10 +175,8 @@ public class TweetSerializer implements TwitterFeedListener {
     g.writeEndArray();
     g.writeStringField(LANG, u.get("lang").textValue());
     g.writeEndObject();
-    synchronized (this) {
-      g.flush();
-      stream.write('\n');
-    }
+    g.flush();
+    buffer.writeTo(stream);
   }
 
 }
