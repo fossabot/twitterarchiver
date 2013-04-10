@@ -18,13 +18,15 @@ public class StreamProvider {
     Runtime.getRuntime().addShutdownHook(new Thread() {
       @Override
       public void run() {
+        OutputStream previousStream = stream;
         synchronized (StreamProvider.this) {
-          try {
-            stream.close();
-            running = false;
-          } catch (IOException e) {
-            e.printStackTrace();
-          }
+          running = false;
+          stream = null;
+        }
+        try {
+          previousStream.close();
+        } catch (IOException e) {
+          e.printStackTrace();
         }
       }
     });

@@ -83,9 +83,12 @@ public class TweetSerializer implements TwitterFeedListener {
     }
   }
 
+  long tracker = 0;
+
   private void writeJson(JsonNode s, OutputStream stream) throws IOException {
     long l = tweets.incrementAndGet();
-    if (l % 100000 == 0) {
+    if (l - tracker >= 100000) {
+      tracker = l;
       long now = System.currentTimeMillis();
       long start = last.getAndSet(now);
       System.out.println(100000 * 1000 / (now - start) + " " + tweets + " " + dropped);
@@ -177,6 +180,7 @@ public class TweetSerializer implements TwitterFeedListener {
     g.writeEndObject();
     g.flush();
     buffer.writeTo(stream);
+    stream.write('\n');
   }
 
 }

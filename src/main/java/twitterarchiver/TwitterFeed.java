@@ -9,6 +9,7 @@ import org.apache.http.auth.AuthScope;
 import org.apache.http.auth.UsernamePasswordCredentials;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.BasicCredentialsProvider;
+import org.apache.http.impl.client.DecompressingHttpClient;
 import org.apache.http.impl.client.DefaultHttpClient;
 
 import java.io.BufferedReader;
@@ -90,6 +91,7 @@ public class TwitterFeed implements Runnable {
           hc.setCredentialsProvider(provider);
         }
         final HttpGet stream = new HttpGet(url);
+
         Timer timer = new Timer();
         timer.scheduleAtFixedRate(new TimerTask() {
           int current = 0;
@@ -106,7 +108,8 @@ public class TwitterFeed implements Runnable {
           }
         }, waitTime, waitTime);
         try {
-          final HttpResponse response = hc.execute(stream);
+          DecompressingHttpClient dhc = new DecompressingHttpClient(hc);
+          final HttpResponse response = dhc.execute(stream);
           BufferedReader br = new BufferedReader(new InputStreamReader(response.getEntity().getContent()));
           String line;
           log.info("Reading stream");
