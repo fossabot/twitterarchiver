@@ -49,15 +49,15 @@ public class App {
     final StreamProvider jsonStreamProvider = new StreamProvider(hose);
     // Get the filename we are going to use
     jsonStreamProvider.getStream();
-    TwitterFeedUploader uploader = new TwitterFeedUploader(hose, ".json.gz", jsonStreamProvider);
-    uploader.start();
-    if (!upload) {
-      twitterFeed.addEventListener(new TweetSerializer(jsonStreamProvider, dropped, tweets, last));
-      if (users) {
-        twitterFeed.addEventListener(new UserStorer());
-      }
-      twitterFeed.run();
+    if (upload) {
+      TwitterFeedUploader uploader = new TwitterFeedUploader(hose, ".json.gz", jsonStreamProvider);
+      uploader.start();
     }
+    twitterFeed.addEventListener(new TweetSerializer(jsonStreamProvider, dropped, tweets, last));
+    if (users) {
+      twitterFeed.addEventListener(new UserStorer());
+    }
+    twitterFeed.run();
   }
 
 }
