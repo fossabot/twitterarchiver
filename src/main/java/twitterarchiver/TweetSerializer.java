@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.MappingJsonFactory;
+import com.yammer.metrics.Metrics;
+import com.yammer.metrics.core.Counter;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -11,6 +13,8 @@ import java.io.OutputStream;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.concurrent.atomic.AtomicLong;
+
+import static com.yammer.metrics.Metrics.newCounter;
 
 /**
  * Convert twitter JSON to a lightweight, compressed JSON representation.
@@ -32,16 +36,21 @@ public class TweetSerializer implements TwitterFeedListener {
   private static final String LANG = "n";
 
   private final StreamProvider jsonStreamProvider;
-  private final AtomicLong dropped;
-  private final AtomicLong tweets;
-  private final AtomicLong last;
+  private final Counter urls;
+  private final Counter tweets;
+  private final Counter dropped;
+  private final Counter hashtags;
+  private final Counter mentions;
+  private final Counter media;
+  private final Counter retweets;
+  private final Counter verified;
+  private final Counter geo;
+  private final Counter replies;
+  private final Counter delay;
   JsonFactory jf;
 
-  public TweetSerializer(StreamProvider jsonStreamProvider, AtomicLong dropped, AtomicLong tweets, AtomicLong last) {
+  public TweetSerializer(StreamProvider jsonStreamProvider) {
     this.jsonStreamProvider = jsonStreamProvider;
-    this.dropped = dropped;
-    this.tweets = tweets;
-    this.last = last;
     jf = new MappingJsonFactory();
     formatter = new ThreadLocal<SimpleDateFormat>() {
       @Override
@@ -50,6 +59,17 @@ public class TweetSerializer implements TwitterFeedListener {
         return new SimpleDateFormat("EEE MMM dd HH:mm:ss Z yyyy");
       }
     };
+    tweets = newCounter(TweetSerializer.class, "tweets");
+    urls = newCounter(TweetSerializer.class, "urls");
+    dropped = newCounter(TweetSerializer.class, "dropped");
+    hashtags = newCounter(TweetSerializer.class, "hashtags");
+    mentions = newCounter(TweetSerializer.class, "mentions");
+    media = newCounter(TweetSerializer.class, "media");
+    retweets = newCounter(TweetSerializer.class, "retweets");
+    verified = newCounter(TweetSerializer.class, "verified");
+    geo = newCounter(TweetSerializer.class, "geo");
+    replies = newCounter(TweetSerializer.class, "replies");
+    delay = newCounter(TweetSerializer.class, "delay");
   }
 
   @Override
@@ -69,7 +89,7 @@ public class TweetSerializer implements TwitterFeedListener {
 
   @Override
   public void tooSlow() {
-    dropped.incrementAndGet();
+    dropped.inc();
   }
 
   ThreadLocal<SimpleDateFormat> formatter;
@@ -86,13 +106,7 @@ public class TweetSerializer implements TwitterFeedListener {
   long tracker = 0;
 
   private void writeJson(JsonNode s, OutputStream stream) throws IOException {
-    long l = tweets.incrementAndGet();
-    if (l - tracker >= 100000) {
-      tracker = l;
-      long now = System.currentTimeMillis();
-      long start = last.getAndSet(now);
-      System.out.println(100000 * 1000 / (now - start) + " " + tweets + " " + dropped);
-    }
+    tweets.inc();
     ByteArrayOutputStream buffer = new ByteArrayOutputStream();
     JsonGenerator g = jf.createGenerator(buffer);
     g.writeStartObject();
@@ -101,16 +115,20 @@ public class TweetSerializer implements TwitterFeedListener {
     JsonNode u = s.get("user");
     g.writeNumberField(USER_ID, u.get("id").longValue());
     try {
-      g.writeNumberField(CREATED_AT, formatter.get().parse(s.get("created_at").textValue()).getTime());
+      long created_at = formatter.get().parse(s.get("created_at").textValue()).getTime();
+      g.writeNumberField(CREATED_AT, created_at);
+      delay.inc(System.currentTimeMillis() - created_at);
     } catch (ParseException e) {
       e.printStackTrace();
     }
     Long inReplyToStatusId = getLong(s, "in_reply_to_status_id");
-    if (inReplyToStatusId != null) {
+    if (inReplyToStatusId != null && inReplyToStatusId != 0) {
+      replies.inc();
       g.writeNumberField(IN_REPLY_TO_ID, inReplyToStatusId);
     }
     JsonNode retweetedStatus = s.get("retweeted_status");
     if (retweetedStatus != null) {
+      retweets.inc();
       g.writeNumberField(RETWEETED_ID, getLong(retweetedStatus, "id"));
     }
     JsonNode entities = s.get("entities");
@@ -119,6 +137,7 @@ public class TweetSerializer implements TwitterFeedListener {
       if (userMentionEntities != null && userMentionEntities.size() > 0) {
         g.writeArrayFieldStart(USER_MENTION_IDS);
         for (JsonNode userMentionEntity : userMentionEntities) {
+          mentions.inc();
           g.writeNumber(getLong(userMentionEntity, "id"));
         }
         g.writeEndArray();
@@ -127,6 +146,7 @@ public class TweetSerializer implements TwitterFeedListener {
       if (hashtagEntities != null && hashtagEntities.size() > 0) {
         g.writeArrayFieldStart(HASHTAGS);
         for (JsonNode hashtagEntity : hashtagEntities) {
+          hashtags.inc();
           g.writeString(hashtagEntity.get("text").textValue());
         }
         g.writeEndArray();
@@ -135,6 +155,7 @@ public class TweetSerializer implements TwitterFeedListener {
       if (urlEntities != null && urlEntities.size() > 0) {
         g.writeArrayFieldStart(URLS);
         for (JsonNode urlEntity : urlEntities) {
+          urls.inc();
           JsonNode expandedURL = urlEntity.get("expanded_url");
           if (expandedURL == null) {
             g.writeString(urlEntity.get("url").textValue());
@@ -148,6 +169,7 @@ public class TweetSerializer implements TwitterFeedListener {
       if (mediaEntities != null && mediaEntities.size() > 0) {
         g.writeArrayFieldStart(MEDIA);
         for (JsonNode mediaEntity : mediaEntities) {
+          media.inc();
           g.writeString(mediaEntity.get("media_url").textValue());
         }
         g.writeEndArray();
@@ -159,6 +181,7 @@ public class TweetSerializer implements TwitterFeedListener {
       if (coordinates != null && !coordinates.isNull()) {
         coordinates = coordinates.get("coordinates");
         if (coordinates != null && !coordinates.isNull()) {
+          geo.inc();
           g.writeArrayFieldStart(GEO);
           g.writeNumber(coordinates.get(0).doubleValue());
           g.writeNumber(coordinates.get(1).doubleValue());
@@ -167,6 +190,7 @@ public class TweetSerializer implements TwitterFeedListener {
       }
     }
     if (u.get("verified").asBoolean()) {
+      verified.inc();
       g.writeBooleanField(VERIFIED, true);
     }
     g.writeArrayFieldStart(FOLLOWERS_FRIENDS_FAVS_STATUSES_LISTED);

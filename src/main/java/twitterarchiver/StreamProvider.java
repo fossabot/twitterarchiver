@@ -3,6 +3,10 @@ package twitterarchiver;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.util.Queue;
+import java.util.Timer;
+import java.util.TimerTask;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.zip.GZIPOutputStream;
 
 /**
@@ -10,11 +14,13 @@ import java.util.zip.GZIPOutputStream;
  */
 public class StreamProvider {
 
+  private final Timer timer;
   private String prefix;
   private String filename;
 
   public StreamProvider(String prefix) {
     this.prefix = prefix;
+    timer = new Timer();
     Runtime.getRuntime().addShutdownHook(new Thread() {
       @Override
       public void run() {
@@ -24,8 +30,9 @@ public class StreamProvider {
           stream = null;
         }
         try {
+          Thread.sleep(1000);
           previousStream.close();
-        } catch (IOException e) {
+        } catch (Exception e) {
           e.printStackTrace();
         }
       }
@@ -44,7 +51,7 @@ public class StreamProvider {
     if (running) {
       long newlast = (System.currentTimeMillis() / 3600000) * 3600000l; // hour markers
       if (newlast > last || stream == null) {
-        OutputStream previousStream = stream;
+        final OutputStream previousStream = stream;
         synchronized (this) {
           last = newlast;
           // Ensures that it doesn't write over a previous file if you stop and restart
@@ -52,7 +59,17 @@ public class StreamProvider {
           stream = new GZIPOutputStream(new FileOutputStream(filename));
         }
         if (previousStream != null) {
-          previousStream.close();
+          // Need to wait for the system to stop writing to the old stream
+          timer.schedule(new TimerTask() {
+            @Override
+            public void run() {
+              try {
+                previousStream.close();
+              } catch (IOException e) {
+                e.printStackTrace();
+              }
+            }
+          }, 1000);
         }
       }
       return stream;

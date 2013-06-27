@@ -2,9 +2,12 @@ package twitterarchiver;
 
 import com.sampullara.cli.Args;
 import com.sampullara.cli.Argument;
+import com.yammer.metrics.Metrics;
+import metricsreporter.JsonMetricsReporter;
 
 import java.io.IOException;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
 
@@ -24,6 +27,9 @@ public class App {
   @Argument
   private static Boolean users = false;
 
+  @Argument
+  private static String sunnylabs;
+
   public static void main(String[] args) throws IOException {
     try {
       Args.parse(App.class, args);
@@ -32,9 +38,11 @@ public class App {
       Args.usage(App.class);
       System.exit(1);
     }
-    final AtomicLong tweets = new AtomicLong(0);
-    final AtomicLong dropped = new AtomicLong(0);
-    final AtomicLong last = new AtomicLong(System.currentTimeMillis());
+    if (sunnylabs != null) {
+      System.out.println("Starting metrics reporter");
+      JsonMetricsReporter mr = new JsonMetricsReporter(Metrics.defaultRegistry(), "tsdb", sunnylabs);
+      mr.start(1, TimeUnit.MINUTES);
+    }
     Properties auth = new Properties();
     auth.load(App.class.getResourceAsStream("/auth.properties"));
     String host = auth.getProperty("host");
@@ -49,15 +57,15 @@ public class App {
     final StreamProvider jsonStreamProvider = new StreamProvider(hose);
     // Get the filename we are going to use
     jsonStreamProvider.getStream();
-    if (upload) {
-      TwitterFeedUploader uploader = new TwitterFeedUploader(hose, ".json.gz", jsonStreamProvider);
-      uploader.start();
+    TwitterFeedUploader uploader = new TwitterFeedUploader(hose, ".json.gz", jsonStreamProvider);
+    uploader.start();
+    if (!upload) {
+      twitterFeed.addEventListener(new TweetSerializer(jsonStreamProvider));
+      if (users) {
+        twitterFeed.addEventListener(new UserStorer());
+      }
+      twitterFeed.run();
     }
-    twitterFeed.addEventListener(new TweetSerializer(jsonStreamProvider, dropped, tweets, last));
-    if (users) {
-      twitterFeed.addEventListener(new UserStorer());
-    }
-    twitterFeed.run();
   }
 
 }

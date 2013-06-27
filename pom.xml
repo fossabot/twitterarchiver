@@ -23,6 +23,12 @@
     </dependency>
 
     <dependency>
+      <groupId>com.sunnylabs</groupId>
+      <artifactId>metricsreporter</artifactId>
+      <version>0.1-SNAPSHOT</version>
+    </dependency>
+
+    <dependency>
       <groupId>com.github.spullara.cli-parser</groupId>
       <artifactId>cli-parser</artifactId>
       <version>1.1</version>

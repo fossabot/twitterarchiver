@@ -5,19 +5,19 @@ import com.amazonaws.auth.BasicAWSCredentials;
 import com.amazonaws.services.s3.AmazonS3Client;
 import com.amazonaws.services.s3.model.PutObjectRequest;
 import com.amazonaws.services.s3.model.StorageClass;
+import com.yammer.metrics.Metrics;
+import com.yammer.metrics.core.Counter;
+import com.yammer.metrics.core.TimerContext;
 
 import java.io.File;
 import java.io.FilenameFilter;
 import java.io.IOException;
-import java.util.Calendar;
-import java.util.GregorianCalendar;
-import java.util.Properties;
-import java.util.Timer;
-import java.util.TimerTask;
+import java.util.*;
 import java.util.concurrent.Semaphore;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static com.yammer.metrics.Metrics.newCounter;
 import static java.lang.Long.parseLong;
 import static java.util.regex.Pattern.quote;
 
@@ -30,6 +30,9 @@ public class TwitterFeedUploader extends TimerTask {
   private final StreamProvider streamProvider;
   private final Timer timer;
   private final AmazonS3Client client;
+  private final Counter uploads;
+  private final com.yammer.metrics.core.Timer uploadLatency;
+  private final Counter uploadedBytes;
 
   public TwitterFeedUploader(String prefix, String suffix, StreamProvider streamProvider) {
     this.prefix = prefix;
@@ -38,12 +41,15 @@ public class TwitterFeedUploader extends TimerTask {
     timer = new Timer("TwitterFeedUploader", true);
     try {
       Properties awsCredentials = new Properties();
-      awsCredentials.load(TwitterFeedUploader.class.getResourceAsStream("/aws.properties"));
+      awsCredentials.load(TwitterFeedUploader.class.getResourceAsStream("/auth.properties"));
       AWSCredentials credentials = new BasicAWSCredentials(awsCredentials.getProperty("accessKey"), awsCredentials.getProperty("secretKey"));
       client = new AmazonS3Client(credentials);
     } catch (IOException e) {
       throw new AssertionError("No credentials found");
     }
+    uploads = newCounter(TwitterFeedUploader.class, "uploads");
+    uploadLatency = Metrics.newTimer(TwitterFeedUploader.class, "upload_latency");
+    uploadedBytes = newCounter(TwitterFeedUploader.class, "uploaded_bytes");
   }
 
   public void start() {
@@ -79,13 +85,16 @@ public class TwitterFeedUploader extends TimerTask {
             File hourDir = new File(dayDir, String.valueOf(cal.get(Calendar.HOUR_OF_DAY)));
             File s3FileName = new File(hourDir, s);
             File localFile = new File(s);
-            long start = System.currentTimeMillis();
-            System.out.print("Uploading " + localFile + " to " + s3FileName + "...");
-            PutObjectRequest por = new PutObjectRequest("com.sampullara.twitterfeed", s3FileName.toString(), localFile);
-            por.setStorageClass(StorageClass.ReducedRedundancy);
-            client.putObject(por);
-            long diff = System.currentTimeMillis() - start;
-            System.out.println("in " + diff + "ms.");
+            TimerContext time = uploadLatency.time();
+            try {
+              PutObjectRequest por = new PutObjectRequest("com.sampullara.twitterfeed", s3FileName.toString(), localFile);
+              por.setStorageClass(StorageClass.ReducedRedundancy);
+              client.putObject(por);
+              uploadedBytes.inc(localFile.length());
+              uploads.inc();
+            } finally {
+              time.stop();
+            }
             localFile.delete();
           }
         }

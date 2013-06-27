@@ -4,6 +4,9 @@ import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.MappingJsonFactory;
+import com.yammer.metrics.Metrics;
+import com.yammer.metrics.core.Counter;
+import com.yammer.metrics.core.Gauge;
 import org.apache.http.HttpResponse;
 import org.apache.http.auth.AuthScope;
 import org.apache.http.auth.UsernamePasswordCredentials;
@@ -15,14 +18,10 @@ import org.apache.http.impl.client.DefaultHttpClient;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
-import java.util.Timer;
-import java.util.TimerTask;
+import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 
@@ -46,6 +45,10 @@ public class TwitterFeed implements Runnable {
   private String url;
   private int maxWaitTime = 5000;
   private int total;
+  private Counter lines;
+  private Counter connections;
+  private AtomicBoolean currentlyConnected = new AtomicBoolean();
+  private Gauge<Integer> connected;
 
   public TwitterFeed(String url) {
     this.url = url;
@@ -56,6 +59,14 @@ public class TwitterFeed implements Runnable {
     this.username = username;
     this.password = password;
     this.maxWaitTime = maxWaitTime;
+    lines = Metrics.newCounter(TwitterFeed.class, "lines");
+    connections = Metrics.newCounter(TwitterFeed.class, "connections");
+    connected = Metrics.newGauge(TwitterFeed.class, "connected", new Gauge<Integer>() {
+      @Override
+      public Integer value() {
+        return currentlyConnected.get() ? 1 : 0;
+      }
+    });
   }
 
   public TwitterFeed(String username, String password, String url, int maxWaitTime, int total) {
@@ -113,15 +124,22 @@ public class TwitterFeed implements Runnable {
           BufferedReader br = new BufferedReader(new InputStreamReader(response.getEntity().getContent()));
           String line;
           log.info("Reading stream");
-          while (!complete && (line = br.readLine()) != null) {
-            if (!line.equals("")) {
-              updateListeners(line);
-              total.incrementAndGet();
-              retries = 0;
+          connections.inc();
+          currentlyConnected.set(true);
+          try {
+            while (!complete && (line = br.readLine()) != null) {
+              if (!line.equals("")) {
+                lines.inc();
+                updateListeners(line);
+                total.incrementAndGet();
+                retries = 0;
+              }
+              if (TwitterFeed.this.total != 0) {
+                complete = total.get() >= TwitterFeed.this.total;
+              }
             }
-            if (TwitterFeed.this.total != 0) {
-              complete = total.get() >= TwitterFeed.this.total;
-            }
+          } finally {
+            currentlyConnected.set(false);
           }
           log.info("Done reading stream");
           br.close();
@@ -154,37 +172,37 @@ public class TwitterFeed implements Runnable {
           sl.tooSlow();
         }
       } else {
-          totalCount.incrementAndGet();
-          es.submit(new Runnable() {
-            @Override
-            public void run() {
-              try {
-                JsonParser parser = jf.createJsonParser(line);
-                final JsonNode node = parser.readValueAsTree();
-                for (final TwitterFeedListener sl : sls) {
-                  final AtomicInteger count = counts.get(sl);
-                  if (count.intValue() > 10000) {
-                    sl.tooSlow();
-                  } else {
-                    count.incrementAndGet();
-                    es.submit(new Runnable() {
-                      public void run() {
-                        try {
-                          sl.messageReceived(new TwitterFeedEvent(node, line));
-                        } finally {
-                          count.decrementAndGet();
-                        }
+        totalCount.incrementAndGet();
+        es.submit(new Runnable() {
+          @Override
+          public void run() {
+            try {
+              JsonParser parser = jf.createJsonParser(line);
+              final JsonNode node = parser.readValueAsTree();
+              for (final TwitterFeedListener sl : sls) {
+                final AtomicInteger count = counts.get(sl);
+                if (count.intValue() > 10000) {
+                  sl.tooSlow();
+                } else {
+                  count.incrementAndGet();
+                  es.submit(new Runnable() {
+                    public void run() {
+                      try {
+                        sl.messageReceived(new TwitterFeedEvent(node, line));
+                      } finally {
+                        count.decrementAndGet();
                       }
-                    });
-                  }
+                    }
+                  });
                 }
-              } catch (IOException e) {
-                e.printStackTrace();
-              } finally {
-                totalCount.decrementAndGet();
               }
+            } catch (IOException e) {
+              e.printStackTrace();
+            } finally {
+              totalCount.decrementAndGet();
             }
-          });
+          }
+        });
       }
     }
   }
