@@ -111,13 +111,15 @@ public class TweetSerializer implements TwitterFeedListener {
     JsonGenerator g = jf.createGenerator(buffer);
     g.writeStartObject();
     g.writeStringField(TEXT, s.get("text").textValue());
-    g.writeNumberField(ID, getLong(s, "id"));
+    long id = getLong(s, "id");
+    long timestamp = (id >> 22) + 1288834974657l;
+    delay.inc(System.currentTimeMillis() - timestamp);
+    g.writeNumberField(ID, id);
     JsonNode u = s.get("user");
     g.writeNumberField(USER_ID, u.get("id").longValue());
     try {
       long created_at = formatter.get().parse(s.get("created_at").textValue()).getTime();
       g.writeNumberField(CREATED_AT, created_at);
-      delay.inc(System.currentTimeMillis() - created_at);
     } catch (ParseException e) {
       e.printStackTrace();
     }

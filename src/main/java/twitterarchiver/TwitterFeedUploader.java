@@ -3,17 +3,17 @@ package twitterarchiver;
 import com.amazonaws.auth.AWSCredentials;
 import com.amazonaws.auth.BasicAWSCredentials;
 import com.amazonaws.services.s3.AmazonS3Client;
+import com.amazonaws.services.s3.model.ObjectMetadata;
 import com.amazonaws.services.s3.model.PutObjectRequest;
 import com.amazonaws.services.s3.model.StorageClass;
 import com.yammer.metrics.Metrics;
 import com.yammer.metrics.core.Counter;
 import com.yammer.metrics.core.TimerContext;
 
-import java.io.File;
-import java.io.FilenameFilter;
-import java.io.IOException;
+import java.io.*;
 import java.util.*;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -60,47 +60,57 @@ public class TwitterFeedUploader extends TimerTask {
 
   @Override
   public void run() {
-    if (semaphore.tryAcquire()) {
-      try {
-        File currentDir = new File(".");
-        final Pattern GET_TIMESTAMP = Pattern.compile(quote(prefix) + "([0-9]+)" + quote(suffix));
-        String[] list = currentDir.list(new FilenameFilter() {
-          @Override
-          public boolean accept(File dir, String name) {
-            String filename = streamProvider.getFilename();
-            return GET_TIMESTAMP.matcher(name).matches() && !name.equals(filename);
-          }
-        });
-        for (String s : list) {
-          Matcher matcher = GET_TIMESTAMP.matcher(s);
-          if (matcher.matches()) {
-            long timestamp = parseLong(matcher.group(1));
-            Calendar cal = GregorianCalendar.getInstance();
-            cal.setTimeInMillis(timestamp);
-            // Construct filename
-            File prefixDir = new File(prefix);
-            File yearDir = new File(prefixDir, String.valueOf(cal.get(Calendar.YEAR)));
-            File monthDir = new File(yearDir, String.valueOf(cal.get(Calendar.MONTH) + 1));
-            File dayDir = new File(monthDir, String.valueOf(cal.get(Calendar.DAY_OF_MONTH)));
-            File hourDir = new File(dayDir, String.valueOf(cal.get(Calendar.HOUR_OF_DAY)));
-            File s3FileName = new File(hourDir, s);
-            File localFile = new File(s);
-            TimerContext time = uploadLatency.time();
-            try {
-              PutObjectRequest por = new PutObjectRequest("com.sampullara.twitterfeed", s3FileName.toString(), localFile);
-              por.setStorageClass(StorageClass.ReducedRedundancy);
-              client.putObject(por);
-              uploadedBytes.inc(localFile.length());
-              uploads.inc();
-            } finally {
-              time.stop();
+    try {
+      if (semaphore.tryAcquire()) {
+        try {
+          File currentDir = new File(".");
+          final Pattern GET_TIMESTAMP = Pattern.compile(quote(prefix) + "([0-9]+)" + quote(suffix));
+          String[] list = currentDir.list(new FilenameFilter() {
+            @Override
+            public boolean accept(File dir, String name) {
+              String filename = streamProvider.getFilename();
+              return GET_TIMESTAMP.matcher(name).matches() && !name.equals(filename);
             }
-            localFile.delete();
+          });
+          for (String s : list) {
+            Matcher matcher = GET_TIMESTAMP.matcher(s);
+            if (matcher.matches()) {
+              long timestamp = parseLong(matcher.group(1));
+              Calendar cal = GregorianCalendar.getInstance();
+              cal.setTimeInMillis(timestamp);
+              // Construct filename
+              File prefixDir = new File(prefix);
+              File yearDir = new File(prefixDir, String.valueOf(cal.get(Calendar.YEAR)));
+              File monthDir = new File(yearDir, String.valueOf(cal.get(Calendar.MONTH) + 1));
+              File dayDir = new File(monthDir, String.valueOf(cal.get(Calendar.DAY_OF_MONTH)));
+              File hourDir = new File(dayDir, String.valueOf(cal.get(Calendar.HOUR_OF_DAY)));
+              File s3FileName = new File(hourDir, s);
+              File localFile = new File(s);
+              TimerContext time = uploadLatency.time();
+              try {
+                ObjectMetadata metadata = new ObjectMetadata();
+                long length = localFile.length();
+                metadata.setContentLength(length);
+                SlowInputStream sis = new SlowInputStream(new FileInputStream(localFile), length, 20, TimeUnit.MINUTES);
+                PutObjectRequest por = new PutObjectRequest("com.sampullara.twitterfeed", s3FileName.toString(), sis, metadata);
+                por.setStorageClass(StorageClass.ReducedRedundancy);
+                client.putObject(por);
+                uploadedBytes.inc(length);
+                uploads.inc();
+                localFile.delete();
+              } catch (FileNotFoundException e) {
+                e.printStackTrace();
+              } finally {
+                time.stop();
+              }
+            }
           }
+        } finally {
+          semaphore.release();
         }
-      } finally {
-        semaphore.release();
       }
+    } catch (Throwable th) {
+      th.printStackTrace();
     }
   }
 }
