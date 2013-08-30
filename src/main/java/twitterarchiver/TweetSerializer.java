@@ -4,17 +4,17 @@ import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.MappingJsonFactory;
-import com.yammer.metrics.Metrics;
 import com.yammer.metrics.core.Counter;
+import com.yammer.metrics.core.Histogram;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
-import java.util.concurrent.atomic.AtomicLong;
 
 import static com.yammer.metrics.Metrics.newCounter;
+import static com.yammer.metrics.Metrics.newHistogram;
 
 /**
  * Convert twitter JSON to a lightweight, compressed JSON representation.
@@ -47,11 +47,12 @@ public class TweetSerializer implements TwitterFeedListener {
   private final Counter geo;
   private final Counter replies;
   private final Counter delay;
-  JsonFactory jf;
+  private final Histogram descriptionLength;
+  private final Histogram tweetLength;
+  private final JsonFactory jf = new MappingJsonFactory();
 
   public TweetSerializer(StreamProvider jsonStreamProvider) {
     this.jsonStreamProvider = jsonStreamProvider;
-    jf = new MappingJsonFactory();
     formatter = new ThreadLocal<SimpleDateFormat>() {
       @Override
       protected SimpleDateFormat initialValue() {
@@ -70,6 +71,8 @@ public class TweetSerializer implements TwitterFeedListener {
     geo = newCounter(TweetSerializer.class, "geo");
     replies = newCounter(TweetSerializer.class, "replies");
     delay = newCounter(TweetSerializer.class, "delay");
+    descriptionLength = newHistogram(TweetSerializer.class, "description_length");
+    tweetLength = newHistogram(TweetSerializer.class, "tweet_length");
   }
 
   @Override
@@ -103,14 +106,14 @@ public class TweetSerializer implements TwitterFeedListener {
     }
   }
 
-  long tracker = 0;
-
   private void writeJson(JsonNode s, OutputStream stream) throws IOException {
     tweets.inc();
     ByteArrayOutputStream buffer = new ByteArrayOutputStream();
     JsonGenerator g = jf.createGenerator(buffer);
     g.writeStartObject();
-    g.writeStringField(TEXT, s.get("text").textValue());
+    String text = s.get("text").textValue();
+    g.writeStringField(TEXT, text);
+    tweetLength.update(text.length());
     long id = getLong(s, "id");
     long timestamp = (id >> 22) + 1288834974657l;
     delay.inc(System.currentTimeMillis() - timestamp);
@@ -190,6 +193,10 @@ public class TweetSerializer implements TwitterFeedListener {
           g.writeEndArray();
         }
       }
+    }
+    JsonNode bio = u.get("description");
+    if (descriptionLength != null) {
+      descriptionLength.update(bio.textValue().length());
     }
     if (u.get("verified").asBoolean()) {
       verified.inc();

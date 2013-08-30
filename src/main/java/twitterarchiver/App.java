@@ -38,13 +38,13 @@ public class App {
       Args.usage(App.class);
       System.exit(1);
     }
-    if (sunnylabs != null) {
-      System.out.println("Starting metrics reporter");
-      JsonMetricsReporter mr = new JsonMetricsReporter(Metrics.defaultRegistry(), "tsdb", sunnylabs);
-      mr.start(1, TimeUnit.MINUTES);
-    }
     Properties auth = new Properties();
     auth.load(App.class.getResourceAsStream("/auth.properties"));
+    if (sunnylabs != null) {
+      System.out.println("Starting metrics reporter");
+      JsonMetricsReporter mr = new JsonMetricsReporter(Metrics.defaultRegistry(), auth.getProperty("sunnylabstoken"), sunnylabs);
+      mr.start(1, TimeUnit.MINUTES);
+    }
     String host = auth.getProperty("host");
     if (host == null) {
       host = "stream.twitter.com";
