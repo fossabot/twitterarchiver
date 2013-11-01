@@ -195,7 +195,7 @@ public class TweetSerializer implements TwitterFeedListener {
       }
     }
     JsonNode bio = u.get("description");
-    if (descriptionLength == null) {
+    if (bio == null) {
       descriptionLength.update(0);
     } else {
       descriptionLength.update(bio.textValue().length());
