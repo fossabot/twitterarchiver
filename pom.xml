@@ -23,9 +23,9 @@
     </dependency>
 
     <dependency>
-      <groupId>com.sunnylabs</groupId>
-      <artifactId>metricsreporter</artifactId>
-      <version>0.1-SNAPSHOT</version>
+      <groupId>com.yammer.metrics</groupId>
+      <artifactId>metrics-core</artifactId>
+      <version>2.2.0</version>
     </dependency>
 
     <dependency>

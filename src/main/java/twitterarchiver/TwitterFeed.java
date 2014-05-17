@@ -14,11 +14,19 @@ import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.BasicCredentialsProvider;
 import org.apache.http.impl.client.DecompressingHttpClient;
 import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.params.BasicHttpParams;
+import org.apache.http.params.HttpConnectionParams;
+import org.apache.http.params.HttpParams;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.util.*;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.Timer;
+import java.util.TimerTask;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -95,6 +103,10 @@ public class TwitterFeed implements Runnable {
       final AtomicInteger total = new AtomicInteger(0);
       boolean complete = false;
       do {
+        // Timeout after 10s
+        HttpParams params = new BasicHttpParams();
+        HttpConnectionParams.setConnectionTimeout(params, 10000);
+        HttpConnectionParams.setSoTimeout(params, 10000);
         DefaultHttpClient hc = new DefaultHttpClient();
         if (username != null) {
           BasicCredentialsProvider provider = new BasicCredentialsProvider();
@@ -102,7 +114,6 @@ public class TwitterFeed implements Runnable {
           hc.setCredentialsProvider(provider);
         }
         final HttpGet stream = new HttpGet(url);
-
         Timer timer = new Timer();
         timer.scheduleAtFixedRate(new TimerTask() {
           int current = 0;

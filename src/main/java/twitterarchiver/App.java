@@ -3,12 +3,10 @@ package twitterarchiver;
 import com.sampullara.cli.Args;
 import com.sampullara.cli.Argument;
 import com.yammer.metrics.Metrics;
-import metricsreporter.JsonMetricsReporter;
 
 import java.io.IOException;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
 
 /**
@@ -28,7 +26,7 @@ public class App {
   private static Boolean users = false;
 
   @Argument
-  private static String sunnylabs;
+  private static String wavefront;
 
   public static void main(String[] args) throws IOException {
     try {
@@ -40,9 +38,9 @@ public class App {
     }
     Properties auth = new Properties();
     auth.load(App.class.getResourceAsStream("/auth.properties"));
-    if (sunnylabs != null) {
+    if (wavefront != null) {
       System.out.println("Starting metrics reporter");
-      JsonMetricsReporter mr = new JsonMetricsReporter(Metrics.defaultRegistry(), auth.getProperty("sunnylabstoken"), sunnylabs);
+      JsonMetricsReporter mr = new JsonMetricsReporter("twitterfeed", Metrics.defaultRegistry(), auth.getProperty("sunnylabstoken"), wavefront);
       mr.start(1, TimeUnit.MINUTES);
     }
     String host = auth.getProperty("host");

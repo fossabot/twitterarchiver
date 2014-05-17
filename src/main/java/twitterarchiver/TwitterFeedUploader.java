@@ -14,6 +14,7 @@ import java.io.*;
 import java.util.*;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -25,6 +26,8 @@ import static java.util.regex.Pattern.quote;
  * Look in the current directory for files to upload that are not the current file and upload them to S3.
  */
 public class TwitterFeedUploader extends TimerTask {
+  private static final Logger log = Logger.getLogger("Uploader");
+
   private final String prefix;
   private final String suffix;
   private final StreamProvider streamProvider;
@@ -94,10 +97,12 @@ public class TwitterFeedUploader extends TimerTask {
                 SlowInputStream sis = new SlowInputStream(new FileInputStream(localFile), length, 20, TimeUnit.MINUTES);
                 PutObjectRequest por = new PutObjectRequest("com.sampullara.twitterfeed", s3FileName.toString(), sis, metadata);
                 por.setStorageClass(StorageClass.ReducedRedundancy);
+                log.info("Uploading " + localFile);
                 client.putObject(por);
                 uploadedBytes.inc(length);
                 uploads.inc();
                 localFile.delete();
+                log.info("Uploaded " + localFile);
               } catch (FileNotFoundException e) {
                 e.printStackTrace();
               } finally {
