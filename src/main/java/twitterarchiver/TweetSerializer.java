@@ -41,6 +41,7 @@ public class TweetSerializer implements TwitterFeedListener {
   private final Counter dropped;
   private final Counter hashtags;
   private final Counter mentions;
+  private final Counter deletes;
   private final Counter media;
   private final Counter retweets;
   private final Counter verified;
@@ -70,6 +71,7 @@ public class TweetSerializer implements TwitterFeedListener {
     verified = newCounter(TweetSerializer.class, "verified");
     geo = newCounter(TweetSerializer.class, "geo");
     replies = newCounter(TweetSerializer.class, "replies");
+    deletes = newCounter(TweetSerializer.class, "deletes");
     delay = newCounter(TweetSerializer.class, "delay");
     descriptionLength = newHistogram(TweetSerializer.class, "description_length");
     tweetLength = newHistogram(TweetSerializer.class, "tweet_length");
@@ -79,10 +81,17 @@ public class TweetSerializer implements TwitterFeedListener {
   public void messageReceived(final TwitterFeedEvent se) {
     try {
       // Skip deletes, etc.
-      if (se.getNode().get("text") != null) {
-        final OutputStream jsonStream = jsonStreamProvider.getStream();
-        if (jsonStream != null) {
-          writeJson(se.getNode(), jsonStream);
+      JsonNode node = se.getNode();
+      if (node != null) {
+        if (node.get("text") != null) {
+          final OutputStream jsonStream = jsonStreamProvider.getStream();
+          if (jsonStream != null) {
+            writeJson(node, jsonStream);
+          }
+        } else {
+          if (node.get("delete") != null) {
+            deletes.inc();
+          }
         }
       }
     } catch (IOException e) {

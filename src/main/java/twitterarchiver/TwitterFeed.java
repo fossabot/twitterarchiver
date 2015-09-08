@@ -208,7 +208,7 @@ public class TwitterFeed implements Runnable {
                 }
               }
             } catch (IOException e) {
-              e.printStackTrace();
+              System.err.println("Failed to parse: " + line + ", " + e.getMessage());
             } finally {
               totalCount.decrementAndGet();
             }

@@ -26,6 +26,9 @@ public class App {
   private static Boolean users = false;
 
   @Argument
+  private static Boolean view = false;
+
+  @Argument
   private static String wavefront;
 
   public static void main(String[] args) throws IOException {
@@ -55,8 +58,10 @@ public class App {
     final StreamProvider jsonStreamProvider = new StreamProvider(hose);
     // Get the filename we are going to use
     jsonStreamProvider.getStream();
-    TwitterFeedUploader uploader = new TwitterFeedUploader(hose, ".json.gz", jsonStreamProvider);
-    uploader.start();
+    if (!view) {
+      TwitterFeedUploader uploader = new TwitterFeedUploader(hose, ".json.gz", jsonStreamProvider);
+      uploader.start();
+    }
     if (!upload) {
       twitterFeed.addEventListener(new TweetSerializer(jsonStreamProvider));
       if (users) {
