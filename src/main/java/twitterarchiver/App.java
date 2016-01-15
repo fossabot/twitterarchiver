@@ -51,9 +51,10 @@ public class App {
       host = "stream.twitter.com";
     }
     String url = "https://" + host + "/1/statuses/" + hose + ".json";
-    TwitterFeed twitterFeed = new TwitterFeed(auth.getProperty("username"),
-            auth.getProperty("password"),
-            url, 600000);// 10 minutes
+    TwitterFeed twitterFeed = new TwitterFeed(auth.getProperty("oauth.consumerKey"),
+            auth.getProperty("oauth.consumerSecret"),
+            auth.getProperty("oauth.accessToken"),
+            auth.getProperty("oauth.accessTokenSecret"));
     log.info("Connecting to: " + url);
     final StreamProvider jsonStreamProvider = new StreamProvider(hose);
     // Get the filename we are going to use
@@ -67,7 +68,6 @@ public class App {
       if (users) {
         twitterFeed.addEventListener(new UserStorer());
       }
-      twitterFeed.run();
     }
   }
 
