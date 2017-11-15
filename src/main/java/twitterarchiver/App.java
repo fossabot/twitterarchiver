@@ -12,6 +12,7 @@ import java.util.logging.Logger;
 /**
  * Hello world!
  */
+@SuppressWarnings("FieldCanBeLocal")
 public class App {
 
   private static Logger log = Logger.getLogger("TwitterFeed");
