@@ -1,0 +1,11 @@
+{
+  "Services": {
+    "twitterarchiver": {
+      "Image": "spullara/twitterarchiver@sha256:7fd967e121778583b8bd17b6ab5813e76f2ba4f1af1098adfdf748cc6b86785e", 
+      "Networks": [
+        "default"
+      ]
+    }
+  }, 
+  "Version": "0.1"
+}
